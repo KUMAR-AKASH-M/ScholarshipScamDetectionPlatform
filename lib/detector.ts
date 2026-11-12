@@ -40,7 +40,6 @@ const OFFICIAL_DOMAINS = [
   "chevening.org",
   "fulbrightonline.org",
   "daad.de",
-  "scholarships.com",
 ];
 
 const SUSPICIOUS_TLDS = [
@@ -215,30 +214,25 @@ function findLookalikeDomain(hostname: string): string | null {
   const deLeet = (s: string) =>
     s.replace(/0/g, "o").replace(/1/g, "i").replace(/3/g, "e").replace(/5/g, "s");
   const normalizedHost = deLeet(cleanHost);
-  const compactHost = normalizedHost.replace(/[-.]/g, "");
+  const hostBase = getBaseDomain(normalizedHost);
 
   for (const official of OFFICIAL_DOMAINS) {
-    const officialBrand = official.split(".")[0];
-    const compactOfficial = official.replace(/[-.]/g, "");
-
-    if (
-      compactHost.includes(compactOfficial) ||
-      (officialBrand.length >= 6 && normalizedHost.includes(officialBrand))
-    ) {
-      return official;
-    }
-
     if (levenshtein(normalizedHost, official) <= 2) {
       return official;
     }
 
-    const hostBase = getBaseDomain(normalizedHost);
     if (levenshtein(hostBase, official) <= 2) {
       return official;
     }
   }
 
   return null;
+}
+
+function findFreeHostingDomain(hostname: string): string | undefined {
+  return FREE_HOSTING_DOMAINS.find(
+    (host) => hostname === host || hostname.endsWith(`.${host}`)
+  );
 }
 
 /** Match regex while ignoring matches preceded closely by negation words (e.g. "no registration fee"). */
@@ -305,9 +299,7 @@ function checkDomain(rawUrl: string): Signal[] {
     });
   }
 
-  const matchedFreeHost = FREE_HOSTING_DOMAINS.find(
-    (host) => hostname === host || hostname.endsWith(`.${host}`)
-  );
+  const matchedFreeHost = findFreeHostingDomain(hostname);
   if (matchedFreeHost) {
     signals.push({
       signal: "Free Hosting / Form-Builder Domain",
@@ -519,6 +511,10 @@ function checkContactMismatch(rawUrl: string, emails: string[]): Signal[] {
   const { hostname, isValid } = parseUrlSafely(rawUrl);
   if (!isValid || !hostname) return signals;
 
+  if (findFreeHostingDomain(hostname)) {
+    return signals;
+  }
+
   const siteBase = getBaseDomain(hostname);
   for (const email of emails) {
     const emailDomain = email.split("@")[1];
@@ -555,6 +551,14 @@ export function getVerdictGuidance(verdict: VerdictBand): string {
   }
 }
 
+const MISSING_INFO_SIGNAL_NAMES = new Set([
+  "URL Missing HTTPS Scheme",
+  "No Official Contact Email Provided",
+  "Very Short or Sparse Description",
+]);
+
+const MISSING_INFO_POINTS_CAP = 15;
+
 /**
  * Evaluate a scholarship listing using transparent, rule-based checks.
  * Returns a capped 0-100 risk score, verdict band, cautious guidance, and every fired signal.
@@ -573,7 +577,7 @@ export function analyzeScholarship(input: ScholarshipInput): DetectionResult {
     [input.contactEmail ?? "", input.organisation, input.description].join(" ")
   );
 
-  const signals: Signal[] = [
+  const rawSignals: Signal[] = [
     ...checkDomain(input.url),
     ...checkPaymentDemands(combinedText),
     ...checkOrganisation(input.organisation, combinedText, emails),
@@ -581,6 +585,25 @@ export function analyzeScholarship(input: ScholarshipInput): DetectionResult {
     ...checkSuspiciousLanguage(combinedText),
     ...checkContactMismatch(input.url, emails),
   ];
+
+  const missingInfoSum = rawSignals
+    .filter((s) => MISSING_INFO_SIGNAL_NAMES.has(s.signal))
+    .reduce((sum, s) => sum + s.points, 0);
+
+  const signals: Signal[] =
+    missingInfoSum > MISSING_INFO_POINTS_CAP
+      ? rawSignals.map((s) =>
+          MISSING_INFO_SIGNAL_NAMES.has(s.signal)
+            ? {
+                ...s,
+                points: Math.max(
+                  1,
+                  Math.floor((s.points * MISSING_INFO_POINTS_CAP) / missingInfoSum)
+                ),
+              }
+            : s
+        )
+      : rawSignals;
 
   const rawScore = signals.reduce((sum, item) => sum + item.points, 0);
   const score = Math.max(0, Math.min(100, rawScore));
