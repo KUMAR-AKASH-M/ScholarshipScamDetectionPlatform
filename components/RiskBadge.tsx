@@ -44,7 +44,7 @@ export function RiskBadge({
       tone={cfg.tone}
       size={size}
       seed={`risk-${verdict}`}
-      className="max-w-full whitespace-normal text-left leading-tight"
+      className="whitespace-nowrap"
     >
       <span>{displayLabel}</span>
       {typeof score === "number" && (

@@ -38,7 +38,6 @@ export function ScholarshipCard({ scholarship }: ScholarshipCardProps) {
               verdict={detection.verdict}
               score={detection.score}
               size="sm"
-              showGuidanceLabel={detection.verdict === "Suspicious"}
             />
           </div>
 
